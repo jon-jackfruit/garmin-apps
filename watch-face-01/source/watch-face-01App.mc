@@ -18,7 +18,8 @@ class watch_face_01App extends Application.AppBase {
 
     // Return the initial view of your application here
     function getInitialView() as [Views] or [Views, InputDelegates] {
-        return [ new watch_face_01View() ];
+        var view = new watch_face_01View();
+        return [ view, new watch_face_01Delegate(view) ];
     }
 
 }

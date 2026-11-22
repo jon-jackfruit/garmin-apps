@@ -2,7 +2,6 @@ import Toybox.Activity;
 import Toybox.Complications;
 import Toybox.Graphics;
 import Toybox.Lang;
-import Toybox.Math;
 import Toybox.System;
 import Toybox.WatchUi;
 
@@ -12,19 +11,28 @@ import Toybox.WatchUi;
 //
 //               14:37
 //
-//          ♥ 62        ▮ 78%
+//          ♥ 62        🧍 78%
 //
-//              🔔 2
+//               ▮ 85%
+//
+// Touch-and-hold an item to open the matching Garmin page (see watch_face_01Delegate).
 class watch_face_01View extends WatchUi.WatchFace {
 
     private const COLOR_HEART = 0xFF3B3B;
-    private const COLOR_BATTERY = 0x3FA9F5;
+    private const COLOR_BODY_BATTERY = 0x3FA9F5;
+    private const COLOR_BODY_BATTERY_EMPTY = 0x1B3A52;
     private const COLOR_SUN = 0xFFAA00;
-    private const COLOR_ALARM = 0xFFD54A;
+    private const COLOR_DEVICE_BATTERY = 0x4CD964;
+    private const COLOR_DEVICE_BATTERY_LOW = 0xFF3B3B;
     private const NO_DATA = "--";
+    private const ICON_GAP = 8;
+    private const HIT_PAD = 14;
 
     private var _isAwake as Boolean = true;
     private var _burnInProtection as Boolean = false;
+
+    // Touch targets from the last draw: [left, top, right, bottom, complication type].
+    private var _hits as Array<Array<Number>> = [];
 
     function initialize() {
         WatchFace.initialize();
@@ -38,6 +46,7 @@ class watch_face_01View extends WatchUi.WatchFace {
     function onUpdate(dc as Dc) as Void {
         dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
         dc.clear();
+        _hits = [];
 
         // AMOLED always-on mode: leave the screen black.
         if (!_isAwake && _burnInProtection) {
@@ -47,27 +56,33 @@ class watch_face_01View extends WatchUi.WatchFace {
         var w = dc.getWidth();
         var h = dc.getHeight();
         var cx = w / 2;
+        var colOffset = (w * 0.20).toNumber();
 
         // Sunrise / sunset
-        var sunY = (h * 0.20).toNumber();
-        drawSunItem(dc, cx - (w * 0.20).toNumber(), sunY, true, formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNRISE)));
-        drawSunItem(dc, cx + (w * 0.20).toNumber(), sunY, false, formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNSET)));
+        var sunY = (h * 0.21).toNumber();
+        drawItem(dc, cx - colOffset, sunY, :sunrise, 22,
+            formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNRISE)),
+            Graphics.FONT_TINY, Complications.COMPLICATION_TYPE_SUNRISE);
+        drawItem(dc, cx + colOffset, sunY, :sunset, 22,
+            formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNSET)),
+            Graphics.FONT_TINY, Complications.COMPLICATION_TYPE_SUNSET);
 
         // Time
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, (h * 0.43).toNumber(), Graphics.FONT_NUMBER_THAI_HOT, getTimeString(),
+        dc.drawText(cx, (h * 0.44).toNumber(), Graphics.FONT_NUMBER_HOT, getTimeString(),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         // Heart rate / body battery
-        var statY = (h * 0.67).toNumber();
+        var statY = (h * 0.66).toNumber();
         var hr = getHeartRate();
-        drawStat(dc, cx - (w * 0.20).toNumber(), statY, :heart, hr != null ? hr.toString() : NO_DATA);
-
+        drawItem(dc, cx - colOffset, statY, :heart, 22, hr != null ? hr.toString() : NO_DATA,
+            Graphics.FONT_SMALL, Complications.COMPLICATION_TYPE_HEART_RATE);
         var bb = getComplicationNumber(Complications.COMPLICATION_TYPE_BODY_BATTERY);
-        drawStat(dc, cx + (w * 0.20).toNumber(), statY, :battery, bb != null ? bb.toString() + "%" : NO_DATA);
+        drawItem(dc, cx + colOffset, statY, :person, 16, bb != null ? bb.toString() + "%" : NO_DATA,
+            Graphics.FONT_SMALL, Complications.COMPLICATION_TYPE_BODY_BATTERY);
 
-        // Alarms
-        drawAlarm(dc, cx, (h * 0.84).toNumber());
+        // Device battery
+        drawDeviceBatteryItem(dc, cx, (h * 0.84).toNumber());
     }
 
     function onShow() as Void {
@@ -86,43 +101,54 @@ class watch_face_01View extends WatchUi.WatchFace {
         WatchUi.requestUpdate();
     }
 
-    // ---- Drawing --------------------------------------------------------
+    // The complication type under (x, y), or null.
+    function complicationAt(x as Number, y as Number) as Complications.Type? {
+        for (var i = 0; i < _hits.size(); i++) {
+            var r = _hits[i];
+            if (x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3]) {
+                return r[4] as Complications.Type;
+            }
+        }
+        return null;
+    }
+
+    // ---- Layout ---------------------------------------------------------
 
     // Icon on the left, text on the right; the pair is centred on (x, y).
-    private function drawIconText(dc as Dc, x as Number, y as Number, iconW as Number, text as String,
-        font as Graphics.FontType) as Number {
-        var gap = 8;
+    private function drawItem(dc as Dc, x as Number, y as Number, icon as Symbol, iconW as Number,
+        text as String, font as Graphics.FontType, link as Complications.Type?) as Void {
         var textW = dc.getTextWidthInPixels(text, font);
-        var left = x - (iconW + gap + textW) / 2;
+        var totalW = iconW + ICON_GAP + textW;
+        var left = x - totalW / 2;
+
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(left + iconW + gap, y, font, text, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
-        return left;
+        dc.drawText(left + iconW + ICON_GAP, y, font, text, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+        drawIcon(dc, icon, left, y, iconW);
+
+        if (link != null) {
+            var half = dc.getFontHeight(font) / 2;
+            _hits.add([left - HIT_PAD, y - half - HIT_PAD, left + totalW + HIT_PAD, y + half + HIT_PAD, link as Number]);
+        }
     }
 
-    private function drawStat(dc as Dc, x as Number, y as Number, icon as Symbol, text as String) as Void {
-        var iconW = 22;
-        var left = drawIconText(dc, x, y, iconW, text, Graphics.FONT_SMALL);
+    private function drawDeviceBatteryItem(dc as Dc, cx as Number, y as Number) as Void {
+        var battery = System.getSystemStats().battery.toNumber();
+        drawItem(dc, cx, y, :deviceBattery, 22, battery.toString() + "%", Graphics.FONT_TINY,
+            Complications.COMPLICATION_TYPE_BATTERY);
+    }
+
+    private function drawIcon(dc as Dc, icon as Symbol, left as Number, cy as Number, size as Number) as Void {
         if (icon == :heart) {
-            drawHeart(dc, left, y, iconW);
-        } else {
-            drawBattery(dc, left, y, iconW, getComplicationNumber(Complications.COMPLICATION_TYPE_BODY_BATTERY));
+            drawHeart(dc, left, cy, size);
+        } else if (icon == :person) {
+            drawPerson(dc, left, cy, size, getComplicationNumber(Complications.COMPLICATION_TYPE_BODY_BATTERY));
+        } else if (icon == :sunrise) {
+            drawSun(dc, left, cy, size, true);
+        } else if (icon == :sunset) {
+            drawSun(dc, left, cy, size, false);
+        } else if (icon == :deviceBattery) {
+            drawDeviceBattery(dc, left, cy, size);
         }
-    }
-
-    private function drawSunItem(dc as Dc, x as Number, y as Number, rising as Boolean, text as String) as Void {
-        var iconW = 22;
-        var left = drawIconText(dc, x, y, iconW, text, Graphics.FONT_TINY);
-        drawSun(dc, left, y, iconW, rising);
-    }
-
-    private function drawAlarm(dc as Dc, x as Number, y as Number) as Void {
-        var count = System.getDeviceSettings().alarmCount;
-        if (count == null || count == 0) {
-            return;
-        }
-        var iconW = 18;
-        var left = drawIconText(dc, x, y, iconW, count.toString(), Graphics.FONT_TINY);
-        drawBell(dc, left, y, iconW);
     }
 
     // ---- Icons (drawn with primitives so they scale and stay crisp) -----
@@ -140,17 +166,42 @@ class watch_face_01View extends WatchUi.WatchFace {
         ]);
     }
 
-    private function drawBattery(dc as Dc, left as Number, cy as Number, size as Number, level as Number?) as Void {
+    // Head and shoulders; fills bottom-up with the body battery level.
+    private function drawPerson(dc as Dc, left as Number, cy as Number, size as Number, level as Number?) as Void {
+        var height = (size * 1.6).toNumber();
+        var top = cy - height / 2;
+        var headR = size / 4 + 1;
+        var bodyTop = top + headR * 2 + 2;
+
+        drawPersonShape(dc, left, top, size, height, headR, bodyTop, COLOR_BODY_BATTERY_EMPTY);
+        if (level != null && level > 0) {
+            var pct = level > 100 ? 100 : level;
+            var filled = (height * pct / 100.0).toNumber();
+            dc.setClip(left - 1, top + height - filled, size + 2, filled + 1);
+            drawPersonShape(dc, left, top, size, height, headR, bodyTop, COLOR_BODY_BATTERY);
+            dc.clearClip();
+        }
+    }
+
+    private function drawPersonShape(dc as Dc, left as Number, top as Number, size as Number, height as Number,
+        headR as Number, bodyTop as Number, color as Number) as Void {
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(left + size / 2, top + headR, headR);
+        dc.fillRoundedRectangle(left, bodyTop, size, top + height - bodyTop, size / 3);
+    }
+
+    private function drawDeviceBattery(dc as Dc, left as Number, cy as Number, size as Number) as Void {
+        var level = System.getSystemStats().battery;
         var bodyW = size - 3;
-        var bodyH = (size * 0.6).toNumber();
+        var bodyH = (size * 0.55).toNumber();
         var top = cy - bodyH / 2;
-        dc.setColor(COLOR_BATTERY, Graphics.COLOR_TRANSPARENT);
+        dc.setColor(level < 20 ? COLOR_DEVICE_BATTERY_LOW : COLOR_DEVICE_BATTERY, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(2);
         dc.drawRoundedRectangle(left, top, bodyW, bodyH, 3);
         dc.fillRectangle(left + bodyW, cy - bodyH / 4, 3, bodyH / 2);
-        if (level != null && level > 0) {
-            var fillW = ((bodyW - 6) * (level > 100 ? 100 : level) / 100.0).toNumber();
-            dc.fillRectangle(left + 3, top + 3, fillW < 1 ? 1 : fillW, bodyH - 6);
+        var fillW = ((bodyW - 6) * (level > 100 ? 100 : level) / 100.0).toNumber();
+        if (fillW > 0) {
+            dc.fillRectangle(left + 3, top + 3, fillW, bodyH - 6);
         }
         dc.setPenWidth(1);
     }
@@ -172,21 +223,6 @@ class watch_face_01View extends WatchUi.WatchFace {
             dc.fillPolygon([[cx, base], [cx - 4, tip], [cx + 4, tip]]);
         }
         dc.setPenWidth(1);
-    }
-
-    private function drawBell(dc as Dc, left as Number, cy as Number, size as Number) as Void {
-        var cx = left + size / 2;
-        var top = cy - size / 2 + 2;
-        var bottom = cy + size / 3;
-        dc.setColor(COLOR_ALARM, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(cx, top + size / 4, size / 4 + 1);
-        dc.fillPolygon([
-            [cx - size / 4 - 1, top + size / 4],
-            [cx + size / 4 + 1, top + size / 4],
-            [left + size, bottom],
-            [left, bottom]
-        ]);
-        dc.fillCircle(cx, bottom + 2, 2);
     }
 
     // ---- Data -----------------------------------------------------------

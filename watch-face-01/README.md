@@ -19,5 +19,7 @@
 
 - Everything is drawn in `source/watch-face-01View.mc`; no layout XML. Icons are drawn with primitives so they stay crisp at any resolution.
 - Heart rate, body battery, sunrise and sunset come from system complications (needs the `ComplicationSubscriber` permission). Heart rate falls back to `Activity.Info.currentHeartRate`. Missing values show `--`.
-- **Next alarm:** Connect IQ doesn't expose alarm times to apps, only `DeviceSettings.alarmCount`. The face shows a bell with the number of alarms set and hides it when there are none.
+- **Next alarm:** not shown. Connect IQ doesn't let apps read alarm times (only `DeviceSettings.alarmCount`), and there's no alarm complication.
+- **Links:** touch-and-hold on sunrise/sunset, heart rate, body battery or device battery opens the matching Garmin page via `Complications.exitTo` (`source/watch-face-01Delegate.mc`). Garmin only passes touch-and-hold (`WatchFaceDelegate.onPress`) to watch faces, not taps.
+- Body battery is a person icon that fills from the bottom with the level. Device battery turns red below 20%.
 - **AMOLED always-on mode:** on devices that need burn-in protection (fr165), the screen stays black while the watch is asleep.
