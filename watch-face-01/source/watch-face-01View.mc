@@ -3,17 +3,22 @@ import Toybox.Complications;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.Time;
+import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
-// Black background, white text, colour only on the icons.
+// Black background, white text, colour only on the icons and the day ring.
 //
+//        ╭──── 24h activity ring ────╮
 //          ☀↑ 06:42   ☀↓ 19:12
 //
 //               14:37
 //
-//          ♥ 62        🧍 78%
+//          SUN 22-11-2026
 //
+//          ♥ 62        🧍 78%
 //               ▮ 85%
+//        ╰───────────────────────────╯
 //
 // Touch-and-hold an item to open the matching Garmin page (see watch_face_01Delegate).
 class watch_face_01View extends WatchUi.WatchFace {
@@ -27,6 +32,9 @@ class watch_face_01View extends WatchUi.WatchFace {
     private const NO_DATA = "--";
     private const ICON_GAP = 8;
     private const HIT_PAD = 14;
+    private const RING_WIDTH = 6;
+
+    private var _ring as DayRing = new DayRing();
 
     private var _isAwake as Boolean = true;
     private var _burnInProtection as Boolean = false;
@@ -48,6 +56,9 @@ class watch_face_01View extends WatchUi.WatchFace {
         dc.clear();
         _hits = [];
 
+        // Keep the day ring's record going even while the screen is blank.
+        _ring.update();
+
         // AMOLED always-on mode: leave the screen black.
         if (!_isAwake && _burnInProtection) {
             return;
@@ -58,22 +69,34 @@ class watch_face_01View extends WatchUi.WatchFace {
         var cx = w / 2;
         var colOffset = (w * 0.20).toNumber();
 
-        // Sunrise / sunset
-        var sunY = (h * 0.21).toNumber();
-        drawItem(dc, cx - colOffset, sunY, :sunrise, 22,
-            formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNRISE)),
-            Graphics.FONT_TINY, Complications.COMPLICATION_TYPE_SUNRISE);
-        drawItem(dc, cx + colOffset, sunY, :sunset, 22,
-            formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNSET)),
-            Graphics.FONT_TINY, Complications.COMPLICATION_TYPE_SUNSET);
+        // 24h ring of 15-minute bands around the edge
+        _ring.draw(dc, cx, h / 2, (w < h ? w : h) / 2, RING_WIDTH);
 
-        // Time
+        // Sunrise / sunset, small and close together above the time
+        var sunY = (h * 0.22).toNumber();
+        var sunOffset = (w * 0.15).toNumber();
+        drawItem(dc, cx - sunOffset, sunY, :sunrise, 18,
+            formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNRISE)),
+            Graphics.FONT_XTINY, Complications.COMPLICATION_TYPE_SUNRISE);
+        drawItem(dc, cx + sunOffset, sunY, :sunset, 18,
+            formatSecondsOfDay(getComplicationNumber(Complications.COMPLICATION_TYPE_SUNSET)),
+            Graphics.FONT_XTINY, Complications.COMPLICATION_TYPE_SUNSET);
+
+        // Time with the day and date below it, centred as a block
+        var timeFont = Graphics.FONT_NUMBER_MEDIUM;
+        var dateFont = Graphics.FONT_TINY;
+        var timeH = Graphics.getFontAscent(timeFont);
+        var dateH = Graphics.getFontAscent(dateFont);
+        var dateGap = 26;
+        var blockTop = (h * 0.45).toNumber() - (timeH + dateGap + dateH) / 2;
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, (h * 0.44).toNumber(), Graphics.FONT_NUMBER_HOT, getTimeString(),
+        dc.drawText(cx, blockTop + timeH / 2, timeFont, getTimeString(),
+            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(cx, blockTop + timeH + dateGap + dateH / 2, dateFont, getDateString(),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        // Heart rate / body battery
-        var statY = (h * 0.66).toNumber();
+        // Heart rate / body battery, just above the device battery
+        var statY = (h * 0.73).toNumber();
         var hr = getHeartRate();
         drawItem(dc, cx - colOffset, statY, :heart, 22, hr != null ? hr.toString() : NO_DATA,
             Graphics.FONT_SMALL, Complications.COMPLICATION_TYPE_HEART_RATE);
@@ -81,8 +104,8 @@ class watch_face_01View extends WatchUi.WatchFace {
         drawItem(dc, cx + colOffset, statY, :person, 16, bb != null ? bb.toString() + "%" : NO_DATA,
             Graphics.FONT_SMALL, Complications.COMPLICATION_TYPE_BODY_BATTERY);
 
-        // Device battery
-        drawDeviceBatteryItem(dc, cx, (h * 0.84).toNumber());
+        // Device battery, at the bottom of the space inside the ring
+        drawDeviceBatteryItem(dc, cx, (h * 0.87).toNumber());
     }
 
     function onShow() as Void {
@@ -226,6 +249,14 @@ class watch_face_01View extends WatchUi.WatchFace {
     }
 
     // ---- Data -----------------------------------------------------------
+
+    // e.g. "SUN 22-11-2026"
+    private function getDateString() as String {
+        var now = Time.now();
+        var day = Gregorian.info(now, Time.FORMAT_MEDIUM).day_of_week as String;
+        var d = Gregorian.info(now, Time.FORMAT_SHORT);
+        return day.toUpper() + " " + d.day.format("%02d") + "-" + (d.month as Number).format("%02d") + "-" + d.year;
+    }
 
     private function getTimeString() as String {
         var t = System.getClockTime();
