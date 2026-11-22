@@ -100,6 +100,28 @@ monkeydo bin/app.prg <device>     # wait until the simulator window is up first
 
 The simulator runs inside a bubblewrap sandbox started with `--die-with-parent`, so it exits when the shell or process that started it exits. `pnpm sim` and `pnpm start` work around this by giving it its own detached parent process.
 
+## Installing on a watch (sideloading)
+
+1. **Build for your exact model.** For example, the fr165 and fr165m need different builds:
+   ```sh
+   pnpm build watch-face-01 -d fr165       # add `-- -r` for a smaller release build
+   ```
+   This gives you `<app>/bin/<app>.prg`.
+2. **Connect the watch by USB.** Newer Garmins (e.g. the 165) connect over MTP, not as a USB drive. On GNOME the watch should appear in the Files sidebar. If it doesn't, unplug it and plug it back in, and unlock the watch if it asks.
+3. **Copy the `.prg` into `GARMIN/Apps`** (`GARMIN/APPS` on some models). You can drag and drop in Files, or use the terminal:
+   ```sh
+   gio mount -li | grep -i mtp      # find the watch's mtp:// address
+   gio copy watch-face-01/bin/watch-face-01.prg "mtp://<device>/Internal Storage/GARMIN/Apps/"
+   ```
+4. **Eject and unplug.** The watch installs the app when it disconnects.
+5. **Select it on the watch.** For a watch face, hold **UP** (or long-press the screen), then go to **Watch Face** and scroll to the app.
+
+Notes:
+- The watch accepts the app because it's signed with your developer key. Updating means copying a new build over the old one.
+- Sideloaded apps can't be updated through the Connect IQ store. If you publish an app later, delete the sideloaded copy first.
+- If the app doesn't show up, the usual cause is a build for the wrong model or a watch firmware older than the app's `minApiLevel`.
+- To remove it, delete it on the watch (from the watch face's options) or delete the `.prg` from `GARMIN/Apps`.
+
 ## Troubleshooting
 
 - **Blank login/web window, or `EGL_BAD_PARAMETER`:** EGL can't find a graphics driver. Check that `ciq-fhs bash -c 'echo $__EGL_VENDOR_LIBRARY_FILENAMES'` prints a path.
