@@ -21,6 +21,17 @@
           isLinux = pkgs.stdenv.hostPlatform.isLinux;
           ciqPkgs = nixpkgs-ciq.legacyPackages.${system};
 
+          # The simulator statically links its own FreeType and exports some of
+          # its internals (TT_New_Context, TT_RunIns). nixpkgs' libfreetype
+          # resolves those through the dynamic linker, so it ends up calling
+          # the simulator's (incompatible) copies and segfaults in
+          # TT_Load_Context. Ubuntu avoids this by linking with
+          # -Bsymbolic-functions; do the same here and preload it so every
+          # library in the sandbox shares this copy.
+          freetypeSymbolic = ciqPkgs.freetype.overrideAttrs (old: {
+            NIX_LDFLAGS = (old.NIX_LDFLAGS or "") + " -Bsymbolic-functions";
+          });
+
           # FHS sandbox with every library the Garmin binaries expect.
           # Usage: ciq-fhs <command> [args...]
           ciqFhs = ciqPkgs.buildFHSEnv {
@@ -38,6 +49,7 @@
               gdk-pixbuf
               atk
               libusb1
+              udev
               libsecret
               libnotify
               libjpeg8
@@ -74,6 +86,7 @@
             ];
             runScript = "bash -c 'exec \"$@\"' --";
             profile = ''
+              export LD_PRELOAD="${freetypeSymbolic}/lib/libfreetype.so.6''${LD_PRELOAD:+:$LD_PRELOAD}"
               export GIO_MODULE_DIR=/usr/lib/gio/modules
               # Point libglvnd/EGL at the sandbox's mesa (nothing at /run/opengl-driver on non-NixOS)
               export __EGL_VENDOR_LIBRARY_FILENAMES=${ciqPkgs.mesa.drivers}/share/glvnd/egl_vendor.d/50_mesa.json
@@ -135,7 +148,40 @@
           ciqSim = pkgs.writeShellScriptBin "ciq-sim" ''
             set -euo pipefail
             ${ciqSdkPath}
-            exec ${ciqFhs}/bin/ciq-fhs "$sdk/bin/simulator" "$@"
+            bin="$sdk/bin/simulator"; [ -x "$bin.real" ] && bin="$bin.real"
+            exec ${ciqFhs}/bin/ciq-fhs "$bin" "$@"
+          '';
+
+          # The VS Code extension launches <sdk>/bin/simulator directly (no
+          # override setting), which fails outside the sandbox. This swaps that
+          # binary for a wrapper that runs it via ciq-fhs. Re-run after
+          # installing a new SDK or changing flake.nix; --undo reverts it.
+          ciqPatchSdk = pkgs.writeShellScriptBin "ciq-patch-sdk" ''
+            set -euo pipefail
+            root="$HOME/.Garmin/ConnectIQ/Sdks"
+            link="''${XDG_STATE_HOME:-$HOME/.local/state}/connectiq/ciq-fhs"
+            if [ "''${1:-}" = "--undo" ]; then
+              for real in "$root"/*/bin/simulator.real; do
+                [ -e "$real" ] || continue
+                mv -f "$real" "''${real%.real}"; echo "restored ''${real%.real}"
+              done
+              exit 0
+            fi
+            # Stable, GC-rooted path to the sandbox so the wrapper survives
+            # nix-collect-garbage and flake updates.
+            mkdir -p "$(dirname "$link")"
+            nix-store --add-root "$link" --indirect --realise ${ciqFhs} >/dev/null
+            for sim in "$root"/*/bin/simulator; do
+              [ -e "$sim" ] || continue
+              if [ ! -e "$sim.real" ]; then
+                mv "$sim" "$sim.real"
+              fi
+              printf '%s\n' '#!/bin/sh' \
+                "# Added by ciq-patch-sdk (garmin-apps flake). Undo: ciq-patch-sdk --undo" \
+                "exec \"$link/bin/ciq-fhs\" \"\$(dirname \"\$0\")/simulator.real\" \"\$@\"" > "$sim"
+              chmod +x "$sim"
+              echo "patched $sim"
+            done
           '';
 
           # One-off: create the signing key every Connect IQ build needs.
@@ -151,8 +197,8 @@
           '';
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.jdk17 pkgs.openssl ciqKeygen ]
-              ++ lib.optionals isLinux ([ ciqFhs sdkmanager ciqSim ]
+            packages = [ pkgs.jdk17 pkgs.openssl pkgs.nodejs_24 pkgs.pnpm ciqKeygen ]
+              ++ lib.optionals isLinux ([ ciqFhs sdkmanager ciqSim ciqPatchSdk ]
                 ++ map ciqTool [ "monkeyc" "monkeydo" "connectiq" "barrelbuild" "era" ]);
 
             shellHook = ''

@@ -10,3 +10,6 @@ gen/
 # Signing keys - never commit
 *.der
 *.pem
+
+# Node / pnpm
+node_modules/

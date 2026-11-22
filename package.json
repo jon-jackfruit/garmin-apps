@@ -1,0 +1,14 @@
+{
+  "name": "garmin-apps",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "apps": "node scripts/ciq.mjs apps",
+    "devices": "node scripts/ciq.mjs devices",
+    "build": "node scripts/ciq.mjs build",
+    "start": "node scripts/ciq.mjs start",
+    "sim": "node scripts/ciq.mjs sim",
+    "package": "node scripts/ciq.mjs package",
+    "clean": "node scripts/ciq.mjs clean"
+  }
+}
